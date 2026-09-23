@@ -24,18 +24,29 @@ public class OniPayWebhookController {
     }
 
     @PostMapping
-    public ResponseEntity<Map<String, Object>> handleWebhook(@RequestBody Map<String, Object> payload) {
-        log.info("[WEBHOOK ONIPAY] Notificacao de pagamento recebida: {}", payload);
+    public ResponseEntity<Map<String, Object>> handleWebhook(
+            @RequestHeader(value = "X-OniPay-Event", required = false) String eventHeader,
+            @RequestBody Map<String, Object> payload) {
 
-        String status = extractString(payload, "status", "event", "payment_status");
-        String externalIdStr = extractString(payload, "external_id", "donation_id", "reference_id");
-        String chargeId = extractString(payload, "charge_id", "id");
+        log.info("[WEBHOOK ONIPAY] EventHeader={}, Payload={}", eventHeader, payload);
+
+        Map<String, Object> data = payload;
+        if (payload.get("data") instanceof Map) {
+            data = (Map<String, Object>) payload.get("data");
+        }
+
+        String eventType = extractString(payload, "type", "event");
+        String status = extractString(data, "status", "payment_status");
+        String externalIdStr = extractString(data, "externalId", "external_id", "donation_id", "reference_id");
+        String chargeId = extractString(data, "depositId", "id", "charge_id");
 
         boolean isPaid = false;
 
-        if (status != null) {
-            String lowerStatus = status.toLowerCase();
-            if (lowerStatus.contains("paid") || lowerStatus.contains("pago") || lowerStatus.contains("success") || lowerStatus.equals("approved")) {
+        if ("deposit.paid".equalsIgnoreCase(eventHeader) || "deposit.paid".equalsIgnoreCase(eventType)) {
+            isPaid = true;
+        } else if (status != null) {
+            String lower = status.toLowerCase();
+            if (lower.contains("paid") || lower.contains("pago") || lower.contains("success") || lower.equals("approved")) {
                 isPaid = true;
             }
         }
@@ -57,9 +68,9 @@ public class OniPayWebhookController {
             }
 
             if (updated) {
-                log.info("[WEBHOOK ONIPAY] Doacao atualizada com sucesso para PAID!");
+                log.info("[WEBHOOK ONIPAY] Doacao confirmada com sucesso! externalId={}, chargeId={}", externalIdStr, chargeId);
             } else {
-                log.warn("[WEBHOOK ONIPAY] Nenhuma doacao encontrada para o webhook recebido. externalId={}, chargeId={}", externalIdStr, chargeId);
+                log.warn("[WEBHOOK ONIPAY] Doacao nao encontrada para externalId={}, chargeId={}", externalIdStr, chargeId);
             }
         }
 

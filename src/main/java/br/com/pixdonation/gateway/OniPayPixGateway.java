@@ -1,10 +1,6 @@
 package br.com.pixdonation.gateway;
 
-import com.google.zxing.BarcodeFormat;
-import com.google.zxing.WriterException;
-import com.google.zxing.client.j2se.MatrixToImageWriter;
-import com.google.zxing.common.BitMatrix;
-import com.google.zxing.qrcode.QRCodeWriter;
+import br.com.pixdonation.util.PixPayloadBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,9 +12,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -44,7 +37,7 @@ public class OniPayPixGateway implements PixGateway {
 
     @Override
     public PixChargeResult createCharge(UUID donationId, long amountCents) {
-        log.info("[ONIPAY] Criando cobranca PIX real na OniPay para doacaoId={}, valorCentavos={}",
+        log.info("[ONIPAY] Criando cobranca PIX para doacaoId={}, valorCentavos={}",
                 donationId, amountCents);
 
         String effectiveKey = apiKey;
@@ -79,12 +72,18 @@ public class OniPayPixGateway implements PixGateway {
                     chargeId = "ONIPAY-" + donationId.toString();
                 }
 
-                if (pixCopyPaste == null || pixCopyPaste.isEmpty()) {
-                    pixCopyPaste = "00020126580014br.gov.bcb.pix0136" + donationId.toString() + "5204000053039865802BR5925PETVIDA RESGATE ANIMAL6009SAO PAULO62070503***6304ABCD";
+                if (pixCopyPaste == null || pixCopyPaste.isEmpty() || pixCopyPaste.contains("ABCD")) {
+                    pixCopyPaste = new PixPayloadBuilder()
+                            .setPixKey(effectiveKey)
+                            .setMerchantName("PETVIDA RESGATE ANIMAL")
+                            .setMerchantCity("SAO PAULO")
+                            .setAmountCents(amountCents)
+                            .setTxId(donationId.toString().substring(0, 8))
+                            .buildPayload();
                 }
 
                 if (qrCodeBase64 == null || qrCodeBase64.isEmpty()) {
-                    qrCodeBase64 = generateQrCodeBase64(pixCopyPaste);
+                    qrCodeBase64 = PixPayloadBuilder.generateQrCodeBase64(pixCopyPaste, QR_SIZE_PX, QR_SIZE_PX);
                 }
 
                 log.info("[ONIPAY] Cobranca criada com sucesso na OniPay. ChargeId={}", chargeId);
@@ -95,11 +94,17 @@ public class OniPayPixGateway implements PixGateway {
         }
 
         String fallbackChargeId = "ONIPAY-" + UUID.randomUUID().toString().toUpperCase();
-        String fallbackPixPayload = "00020126580014br.gov.bcb.pix0136"
-                + donationId.toString()
-                + "5204000053039865802BR5925PETVIDA RESGATE ANIMAL6009SAO PAULO"
-                + "62070503***6304ABCD";
-        String fallbackQrCode = generateQrCodeBase64(fallbackPixPayload);
+        String fallbackPixPayload = new PixPayloadBuilder()
+                .setPixKey(effectiveKey)
+                .setMerchantName("PETVIDA RESGATE ANIMAL")
+                .setMerchantCity("SAO PAULO")
+                .setAmountCents(amountCents)
+                .setTxId(donationId.toString().substring(0, 8))
+                .buildPayload();
+
+        String fallbackQrCode = PixPayloadBuilder.generateQrCodeBase64(fallbackPixPayload, QR_SIZE_PX, QR_SIZE_PX);
+
+        log.info("[ONIPAY] Gerado payload PIX EMV-Co valido com CRC16={}", PixPayloadBuilder.calculateCRC16(fallbackPixPayload.substring(0, fallbackPixPayload.length() - 4)));
 
         return new PixChargeResult(fallbackChargeId, fallbackPixPayload, fallbackQrCode);
     }
@@ -112,19 +117,5 @@ public class OniPayPixGateway implements PixGateway {
             }
         }
         return null;
-    }
-
-    private String generateQrCodeBase64(String text) {
-        QRCodeWriter writer = new QRCodeWriter();
-        BitMatrix matrix;
-        try {
-            matrix = writer.encode(text, BarcodeFormat.QR_CODE, QR_SIZE_PX, QR_SIZE_PX);
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            MatrixToImageWriter.writeToStream(matrix, "PNG", outputStream);
-            return Base64.getEncoder().encodeToString(outputStream.toByteArray());
-        } catch (WriterException | IOException e) {
-            log.error("[ONIPAY] Erro ao gerar imagem QR Code local", e);
-            return "";
-        }
     }
 }

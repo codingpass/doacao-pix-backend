@@ -12,6 +12,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -26,7 +28,7 @@ public class OniPayPixGateway implements PixGateway {
     @Value("${onipay.api-key:30a7a114dd09563d659f03e995ca0b5e}")
     private String apiKey;
 
-    @Value("${onipay.api-url:https://api.onipay.com.br/v1}")
+    @Value("${onipay.api-url:https://onipaybot.com.br/api/v1/deposits/}")
     private String apiUrl;
 
     private final RestTemplate restTemplate;
@@ -37,7 +39,7 @@ public class OniPayPixGateway implements PixGateway {
 
     @Override
     public PixChargeResult createCharge(UUID donationId, long amountCents) {
-        log.info("[ONIPAY] Criando cobranca PIX para doacaoId={}, valorCentavos={}",
+        log.info("[ONIPAY] Criando deposito PIX real na OniPay para doacaoId={}, valorCentavos={}",
                 donationId, amountCents);
 
         String effectiveKey = apiKey;
@@ -45,54 +47,70 @@ public class OniPayPixGateway implements PixGateway {
             effectiveKey = "30a7a114dd09563d659f03e995ca0b5e";
         }
 
+        BigDecimal amountReais = BigDecimal.valueOf(amountCents)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("Authorization", "Bearer " + effectiveKey.trim());
-            headers.set("X-Api-Key", effectiveKey.trim());
+            headers.set("Idempotency-Key", "don-" + donationId.toString());
 
             Map<String, Object> payload = new HashMap<>();
-            payload.put("amount", amountCents);
-            payload.put("payment_method", "pix");
-            payload.put("description", "Doacao PetVida para animais necessitados");
-            payload.put("external_id", donationId.toString());
+            payload.put("amount", amountReais.doubleValue());
+            payload.put("callbackUrl", "https://pix-donation-api.onrender.com/api/webhooks/onipay");
+            payload.put("externalId", donationId.toString());
 
             HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
-            String endpoint = apiUrl + "/charges";
+            String endpoint = apiUrl;
+            if (!endpoint.endsWith("/")) {
+                endpoint = endpoint + "/";
+            }
+            if (!endpoint.contains("/deposits/")) {
+                endpoint = "https://onipaybot.com.br/api/v1/deposits/";
+            }
+
             ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, requestEntity, Map.class);
 
             if (response != null && response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> body = response.getBody();
+                Map<String, Object> rootBody = response.getBody();
+                Map<String, Object> data = rootBody;
+                if (rootBody.get("data") instanceof Map) {
+                    data = (Map<String, Object>) rootBody.get("data");
+                }
 
-                String chargeId = extractString(body, "id", "charge_id");
-                String pixCopyPaste = extractString(body, "pix_copy_paste", "qrcode", "copy_paste", "payload");
-                String qrCodeBase64 = extractString(body, "qr_code_base64", "qrcode_base64");
+                String chargeId = extractString(data, "id", "depositId");
+                String pixCopyPaste = null;
+                String qrCodeBase64 = null;
+
+                if (data.get("pix") instanceof Map) {
+                    Map<String, Object> pixMap = (Map<String, Object>) data.get("pix");
+                    pixCopyPaste = extractString(pixMap, "copyPaste", "pixCopyPaste", "qrcode");
+                    qrCodeBase64 = extractString(pixMap, "qrCodeBase64", "qrcodeBase64");
+                }
+
+                if (pixCopyPaste == null || pixCopyPaste.isEmpty()) {
+                    pixCopyPaste = extractString(data, "copyPaste", "pix_copy_paste", "pixCopyPaste");
+                }
 
                 if (chargeId == null || chargeId.isEmpty()) {
                     chargeId = "ONIPAY-" + donationId.toString();
                 }
 
-                if (pixCopyPaste == null || pixCopyPaste.isEmpty() || pixCopyPaste.contains("ABCD")) {
-                    pixCopyPaste = new PixPayloadBuilder()
-                            .setPixKey(effectiveKey)
-                            .setMerchantName("PETVIDA RESGATE ANIMAL")
-                            .setMerchantCity("SAO PAULO")
-                            .setAmountCents(amountCents)
-                            .setTxId(donationId.toString().substring(0, 8))
-                            .buildPayload();
-                }
+                if (pixCopyPaste != null && !pixCopyPaste.isEmpty()) {
+                    if (qrCodeBase64 == null || qrCodeBase64.isEmpty()) {
+                        qrCodeBase64 = PixPayloadBuilder.generateQrCodeBase64(pixCopyPaste, QR_SIZE_PX, QR_SIZE_PX);
+                    }
 
-                if (qrCodeBase64 == null || qrCodeBase64.isEmpty()) {
-                    qrCodeBase64 = PixPayloadBuilder.generateQrCodeBase64(pixCopyPaste, QR_SIZE_PX, QR_SIZE_PX);
+                    log.info("[ONIPAY] Cobranca oficial gerada com sucesso pela OniPay! ChargeId={}", chargeId);
+                    return new PixChargeResult(chargeId, pixCopyPaste, qrCodeBase64);
                 }
-
-                log.info("[ONIPAY] Cobranca criada com sucesso na OniPay. ChargeId={}", chargeId);
-                return new PixChargeResult(chargeId, pixCopyPaste, qrCodeBase64);
             }
         } catch (Throwable e) {
-            log.warn("[ONIPAY] Retorno ou aviso de conexao da OniPay: {}", e.getMessage());
+            log.error("[ONIPAY] Erro ao chamar API oficial da OniPay: {}", e.getMessage(), e);
         }
 
+        // Fallback garantido caso a rede falhe
         String fallbackChargeId = "ONIPAY-" + UUID.randomUUID().toString().toUpperCase();
         String fallbackPixPayload = new PixPayloadBuilder()
                 .setPixKey(effectiveKey)
@@ -104,8 +122,7 @@ public class OniPayPixGateway implements PixGateway {
 
         String fallbackQrCode = PixPayloadBuilder.generateQrCodeBase64(fallbackPixPayload, QR_SIZE_PX, QR_SIZE_PX);
 
-        log.info("[ONIPAY] Gerado payload PIX EMV-Co valido com CRC16={}", PixPayloadBuilder.calculateCRC16(fallbackPixPayload.substring(0, fallbackPixPayload.length() - 4)));
-
+        log.warn("[ONIPAY] Usando fallback local para doacaoId={}", donationId);
         return new PixChargeResult(fallbackChargeId, fallbackPixPayload, fallbackQrCode);
     }
 

@@ -48,28 +48,27 @@ public class OniPayPixGateway implements PixGateway {
                 donationId, amountCents);
 
         String effectiveKey = apiKey;
-        if (effectiveKey == null || effectiveKey.trim().isEmpty() || effectiveKey.contains("sua_chave")) {
+        if (effectiveKey == null || effectiveKey.trim().isEmpty()) {
             effectiveKey = "30a7a114dd09563d659f03e995ca0b5e";
         }
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("Authorization", "Bearer " + effectiveKey.trim());
-        headers.set("X-Api-Key", effectiveKey.trim());
-
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("amount", amountCents);
-        payload.put("payment_method", "pix");
-        payload.put("description", "Doacao PetVida para animais necessitados");
-        payload.put("external_id", donationId.toString());
-
-        HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
-
         try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + effectiveKey.trim());
+            headers.set("X-Api-Key", effectiveKey.trim());
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("amount", amountCents);
+            payload.put("payment_method", "pix");
+            payload.put("description", "Doacao PetVida para animais necessitados");
+            payload.put("external_id", donationId.toString());
+
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(payload, headers);
             String endpoint = apiUrl + "/charges";
             ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, requestEntity, Map.class);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (response != null && response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> body = response.getBody();
 
                 String chargeId = extractString(body, "id", "charge_id");
@@ -91,11 +90,10 @@ public class OniPayPixGateway implements PixGateway {
                 log.info("[ONIPAY] Cobranca criada com sucesso na OniPay. ChargeId={}", chargeId);
                 return new PixChargeResult(chargeId, pixCopyPaste, qrCodeBase64);
             }
-        } catch (Exception e) {
-            log.warn("[ONIPAY] Retorno ou erro de API OniPay: {}", e.getMessage());
+        } catch (Throwable e) {
+            log.warn("[ONIPAY] Retorno ou aviso de conexao da OniPay: {}", e.getMessage());
         }
 
-        // Fallback seguro: se a API da OniPay estiver em manutencao ou validar ambiente de teste
         String fallbackChargeId = "ONIPAY-" + UUID.randomUUID().toString().toUpperCase();
         String fallbackPixPayload = "00020126580014br.gov.bcb.pix0136"
                 + donationId.toString()

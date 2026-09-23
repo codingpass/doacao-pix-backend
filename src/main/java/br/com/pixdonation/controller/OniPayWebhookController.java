@@ -10,13 +10,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Controller REST para receber webhooks / notificacoes de pagamento da OniPay.
- *
- * Endpoint: POST /api/webhooks/onipay
- */
 @RestController
 @RequestMapping("/api/webhooks/onipay")
+@CrossOrigin(origins = "*")
 public class OniPayWebhookController {
 
     private static final Logger log = LoggerFactory.getLogger(OniPayWebhookController.class);

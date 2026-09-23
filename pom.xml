@@ -16,8 +16,8 @@
     <groupId>br.com.pixdonation</groupId>
     <artifactId>pix-donation-api</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>pix-donation-api</name>
-    <description>Checkout de doacao via PIX</description>
+    <name>petvida-api</name>
+    <description>PetVida API - Checkout de Doacao via PIX para Animais</description>
 
     <properties>
         <java.version>21</java.version>

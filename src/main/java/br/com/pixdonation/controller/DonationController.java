@@ -13,6 +13,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/donations")
+@CrossOrigin(origins = "*")
 public class DonationController {
 
     private final DonationService donationService;
